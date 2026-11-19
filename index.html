@@ -1,2 +1,337 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pong</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #111827;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    .game {
+      position: relative;
+      width: min(900px, 95vw);
+      text-align: center;
+    }
+
+    #score {
+      height: 60px;
+      font-size: 48px;
+      font-weight: bold;
+      letter-spacing: 10px;
+    }
+
+    #canvas {
+      width: 100%;
+      aspect-ratio: 3 / 2;
+      max-height: 75vh;
+      display: block;
+      border: 3px solid white;
+      background: #020617;
+      cursor: none;
+      touch-action: none;
+    }
+
+    .start-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 16px;
+      background: rgba(2, 6, 23, 0.94);
+    }
+
+    .start-screen[hidden] { display: none; }
+    .start-screen h1 { margin: 0 0 12px; font-size: 56px; }
+
+    .start-screen button {
+      min-width: 220px;
+      padding: 14px 20px;
+      border: 2px solid white;
+      border-radius: 8px;
+      background: #1d4ed8;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+    }
+
+    .start-screen button:hover { background: #2563eb; }
+
+    /* Ondulation légère, activée uniquement en mode bourré. */
+    body.drunk-mode #canvas {
+      filter: url(#softWave);
+      animation: gentle-wobble 3s ease-in-out infinite alternate;
+    }
+
+    @keyframes gentle-wobble {
+      from { transform: rotate(-0.2deg) scale(1.002); }
+      to { transform: rotate(0.2deg) scale(1.002); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      body.drunk-mode #canvas { filter: none; animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <filter id="softWave">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.02" numOctaves="1" seed="3" result="noise" />
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.5" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <main class="game">
+    <section id="startScreen" class="start-screen">
+      <h1>Pong</h1>
+      <button type="button" data-mode="normal">Play</button>
+      <button type="button" data-mode="drunk">Play Mode bourré</button>
+    </section>
+    <div id="score">0&nbsp;&nbsp;0</div>
+    <canvas id="canvas" width="900" height="600"></canvas>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const context = canvas.getContext("2d");
+    const scoreDisplay = document.getElementById("score");
+
+    const paddleWidth = 14;
+    const paddleHeight = 110;
+    const paddleMargin = 20;
+    const winningScore = 5;
     const isMobile = window.matchMedia("(pointer: coarse)").matches || window.innerWidth <= 768;
     const mobileBallSpeedMultiplier = isMobile ? 1.65 : 1;
+
+    let gameOver = false;
+    let gameStarted = false;
+    let gameMode = "normal";
+
+    const player = {
+      x: paddleMargin,
+      y: canvas.height / 2 - paddleHeight / 2,
+      score: 0
+    };
+
+    const computer = {
+      x: canvas.width - paddleMargin - paddleWidth,
+      y: canvas.height / 2 - paddleHeight / 2,
+      score: 0
+    };
+
+    const ball = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      radius: 10,
+      speed: 6 * mobileBallSpeedMultiplier,
+      dx: 6 * mobileBallSpeedMultiplier,
+      dy: 4 * mobileBallSpeedMultiplier
+    };
+
+    const keys = {};
+
+    function resetBall(direction = Math.random() > 0.5 ? 1 : -1) {
+      ball.x = canvas.width / 2;
+      ball.y = canvas.height / 2;
+      ball.speed = 6 * mobileBallSpeedMultiplier;
+      const angle = Math.random() * 0.9 - 0.45;
+      ball.dx = direction * ball.speed * Math.cos(angle);
+      ball.dy = ball.speed * Math.sin(angle);
+    }
+
+    function updateScore() {
+      scoreDisplay.innerHTML = `${player.score}&nbsp;&nbsp;&nbsp;&nbsp;${computer.score}`;
+    }
+
+    function clamp(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    function movePlayerPaddle(clientY) {
+      const bounds = canvas.getBoundingClientRect();
+      let pointerY = (clientY - bounds.top) * (canvas.height / bounds.height);
+
+      if (gameMode === "drunk") {
+        pointerY = canvas.height - pointerY;
+      }
+
+      player.y = clamp(pointerY - paddleHeight / 2, 0, canvas.height - paddleHeight);
+    }
+
+    canvas.addEventListener("mousemove", event => movePlayerPaddle(event.clientY));
+
+    function movePaddleToTouch(event) {
+      event.preventDefault();
+      if (event.touches.length > 0) {
+        movePlayerPaddle(event.touches[0].clientY);
+      }
+    }
+
+    canvas.addEventListener("touchstart", movePaddleToTouch, { passive: false });
+    canvas.addEventListener("touchmove", movePaddleToTouch, { passive: false });
+
+    window.addEventListener("keydown", event => {
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        keys[event.key] = true;
+      }
+    });
+
+    window.addEventListener("keyup", event => {
+      keys[event.key] = false;
+    });
+
+    function update() {
+      if (!gameStarted || gameOver) return;
+
+      const arrowDirection = gameMode === "drunk" ? -1 : 1;
+      if (keys.ArrowUp) player.y -= 8 * arrowDirection;
+      if (keys.ArrowDown) player.y += 8 * arrowDirection;
+      player.y = clamp(player.y, 0, canvas.height - paddleHeight);
+
+      const computerCenter = computer.y + paddleHeight / 2;
+      computer.y += (ball.y - computerCenter) * 0.055;
+      computer.y = clamp(computer.y, 0, canvas.height - paddleHeight);
+
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+
+      // Collision avec les murs supérieur et inférieur.
+      if (ball.y - ball.radius <= 0) {
+        ball.y = ball.radius;
+        ball.dy *= -1;
+      } else if (ball.y + ball.radius >= canvas.height) {
+        ball.y = canvas.height - ball.radius;
+        ball.dy *= -1;
+      }
+
+      // Collision avec la raquette du joueur.
+      if (
+        ball.dx < 0 &&
+        ball.x - ball.radius <= player.x + paddleWidth &&
+        ball.x + ball.radius >= player.x &&
+        ball.y + ball.radius >= player.y &&
+        ball.y - ball.radius <= player.y + paddleHeight
+      ) {
+        ball.x = player.x + paddleWidth + ball.radius;
+        const impact = (ball.y - (player.y + paddleHeight / 2)) / (paddleHeight / 2);
+        ball.speed = Math.min(
+          ball.speed + 0.35 * mobileBallSpeedMultiplier,
+          14 * mobileBallSpeedMultiplier
+        );
+        ball.dx = ball.speed * Math.cos(impact * 0.75);
+        ball.dy = ball.speed * Math.sin(impact * 0.75);
+      }
+
+      // Collision avec la raquette de l'ordinateur.
+      if (
+        ball.dx > 0 &&
+        ball.x + ball.radius >= computer.x &&
+        ball.x - ball.radius <= computer.x + paddleWidth &&
+        ball.y + ball.radius >= computer.y &&
+        ball.y - ball.radius <= computer.y + paddleHeight
+      ) {
+        ball.x = computer.x - ball.radius;
+        const impact = (ball.y - (computer.y + paddleHeight / 2)) / (paddleHeight / 2);
+        ball.speed = Math.min(
+          ball.speed + 0.35 * mobileBallSpeedMultiplier,
+          14 * mobileBallSpeedMultiplier
+        );
+        ball.dx = -ball.speed * Math.cos(impact * 0.75);
+        ball.dy = ball.speed * Math.sin(impact * 0.75);
+      }
+
+      // Attribution des points et fin de partie à 5 points.
+      if (ball.x + ball.radius < 0) {
+        computer.score++;
+        updateScore();
+        if (computer.score >= winningScore) gameOver = true;
+        else resetBall(1);
+      } else if (ball.x - ball.radius > canvas.width) {
+        player.score++;
+        updateScore();
+        if (player.score >= winningScore) gameOver = true;
+        else resetBall(-1);
+      }
+    }
+
+    function drawPaddle(paddle) {
+      context.fillStyle = "white";
+      context.fillRect(paddle.x, paddle.y, paddleWidth, paddleHeight);
+    }
+
+    function draw() {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+
+      context.setLineDash([12, 12]);
+      context.strokeStyle = "rgba(255, 255, 255, 0.45)";
+      context.beginPath();
+      context.moveTo(canvas.width / 2, 0);
+      context.lineTo(canvas.width / 2, canvas.height);
+      context.stroke();
+      context.setLineDash([]);
+
+      drawPaddle(player);
+      drawPaddle(computer);
+
+      context.beginPath();
+      context.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      context.fillStyle = "white";
+      context.fill();
+
+      if (gameOver) {
+        const playerWon = player.score >= winningScore;
+        context.fillStyle = "rgba(0, 0, 0, 0.78)";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.textAlign = "center";
+        context.fillStyle = playerWon ? "#22c55e" : "#ef4444";
+        context.font = "bold 64px Arial";
+        context.fillText(playerWon ? "VICTOIRE !" : "DÉFAITE", canvas.width / 2, canvas.height / 2 - 20);
+        context.fillStyle = "white";
+        context.font = "24px Arial";
+        context.fillText("Le premier à 5 points gagne", canvas.width / 2, canvas.height / 2 + 35);
+      }
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function startGame(mode) {
+      gameMode = mode;
+      gameStarted = true;
+      gameOver = false;
+      player.score = 0;
+      computer.score = 0;
+      player.y = canvas.height / 2 - paddleHeight / 2;
+      computer.y = canvas.height / 2 - paddleHeight / 2;
+      updateScore();
+      document.getElementById("startScreen").hidden = true;
+      document.body.classList.toggle("drunk-mode", mode === "drunk");
+      resetBall();
+    }
+
+    document.querySelectorAll("#startScreen button").forEach(button => {
+      button.addEventListener("click", () => startGame(button.dataset.mode));
+    });
+
+    resetBall();
+    updateScore();
+    gameLoop();
+  </script>
+</body>
+</html>
